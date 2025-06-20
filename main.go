@@ -48,37 +48,32 @@ func main() {
 
 	disc.AddHandler(func(s *discordgo.Session, r *discordgo.Ready) {
 		status.Swap(READY)
-	}) 
-
-	disc.AddHandler(func(s *discordgo.Session, r *discordgo.Ready) {
-		status.Swap(READY)
 		log.Printf("Session ready")
 	}) 
 
 	disc.AddHandler(func(s *discordgo.Session, r *discordgo.InteractionCreate) {
-		if r.User == nil || (r.Member != nil && r.Member.User.ID != user) {
+		userId := ""
+		if r.User != nil {
+			userId = r.User.ID
+		} else if r.Member != nil && r.Member.User != nil && r.Member.User.ID == user {
+			userId = r.Member.User.ID
+		}
+
+		if userId == "" {
 			respondCommand("Please add me as an application & DM me for a response!", s, r)
 			return
 		}
 
-		userId := ""
-		if r.User != nil {
-			userId = r.User.ID
-		} else {
-			userId = user
-		}
-
-
 		if d := r.ApplicationCommandData(); d.Name == keyCheckCommand.Name {
+			g := d.Options[0].StringValue()
+			log.Printf("Command interaction! User: %s, Checking: %s", userId, g)
 			n := time.Now()
-			x := cooldownTracker[r.User.ID]
+			x := cooldownTracker[userId]
 			if n.Before(x) {
 				respondCommand(fmt.Sprintf("You are on cooldown! You can try again <t:%d:R>", x.Unix()), s, r)
 				return
 			}
 
-			g := d.Options[0].StringValue()
-			log.Printf("Command interaction! Checking: %s", g)
 			res := compareParts(key, item, g)
 			if res == -1 {
 				respondCommand("Could not process key!", s, r)
