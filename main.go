@@ -4,6 +4,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,6 +19,7 @@ const (
 	STARTING = 1 << iota
 	READY
 )
+
 
 var keyCheckCommand *discordgo.ApplicationCommand = &discordgo.ApplicationCommand{
 	Name: "check-key",
@@ -40,6 +42,7 @@ func main() {
 	item := os.Getenv("SMALLCLOCK12_ITEM")
 	token := os.Getenv("SMALLCLOCK12_TOKEN")
 	user := os.Getenv("SMALLCLOCK12_USER")
+	cooldown, _ := strconv.Atoi(os.Getenv("SMALLCLOCK12_COOLDOWN"))
 
 	disc, err := discordgo.New("Bot " + token)
 	if err != nil {
@@ -80,10 +83,9 @@ func main() {
 			} else {
 				respondCommand(fmt.Sprint(res), s, r)
 				if userId != user {
-					cooldownTracker[r.User.ID] = n.Add(time.Minute*time.Duration(60))
+					cooldownTracker[userId] = n.Add(time.Minute*time.Duration(cooldown))
 				}
 			}
-
 		}
 	}) 
 
