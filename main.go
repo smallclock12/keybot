@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
@@ -43,6 +44,8 @@ func main() {
 	token := os.Getenv("SMALLCLOCK12_TOKEN")
 	user := os.Getenv("SMALLCLOCK12_USER")
 	cooldown, _ := strconv.Atoi(os.Getenv("SMALLCLOCK12_COOLDOWN"))
+	webhook := os.Getenv("SMALLCLOCK12_WEBHOOK")
+	webhookName := os.Getenv("SMALLCLOCK12_WEBHOOK_NAME")
 
 	disc, err := discordgo.New("Bot " + token)
 	if err != nil {
@@ -69,7 +72,9 @@ func main() {
 
 		if d := r.ApplicationCommandData(); d.Name == keyCheckCommand.Name {
 			g := d.Options[0].StringValue()
-			log.Printf("Command interaction! User: %s, Checking: %s", userId, g)
+			message := fmt.Sprintf("Command interaction! User: %s, Checking: %s", userId, g)
+			go sendToWebhook(webhook, webhookName, message)
+			log.Printf(message)
 			n := time.Now()
 			x := cooldownTracker[userId]
 			if n.Before(x) {
@@ -114,6 +119,18 @@ func respondCommand(message string, s *discordgo.Session, r *discordgo.Interacti
 		},
 	})
 
+}
+
+func sendToWebhook(webhook string, appName string, content string) {
+	if webhook == "" {
+		return
+	}
+
+	body := fmt.Sprintf("{\"content\": \"%s\", \"username\":\"%s\"}", content, appName)
+	_, err := http.Post(webhook, "application/json", strings.NewReader(body))
+	if err != nil {
+		log.Print(err)
+	}
 }
 
 func compareParts(key []string, item string, guess string) int {
