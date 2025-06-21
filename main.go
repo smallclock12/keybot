@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
@@ -20,6 +23,16 @@ const (
 	READY
 )
 
+type interaction struct {
+	userId string
+	username string
+	command string
+	content string
+	result string
+	timestamp time.Time
+}
+
+var cooldownTracker map[string]time.Time = map[string]time.Time{}
 
 var keyCheckCommand *discordgo.ApplicationCommand = &discordgo.ApplicationCommand{
 	Name: "check-key",
@@ -32,17 +45,18 @@ var keyCheckCommand *discordgo.ApplicationCommand = &discordgo.ApplicationComman
 	}},
 }
 
-var cooldownTracker map[string]time.Time = map[string]time.Time{}
+var key = strings.Split(os.Getenv("SMALLCLOCK12_KEY"), "-")
+var item = os.Getenv("SMALLCLOCK12_ITEM")
+var token = os.Getenv("SMALLCLOCK12_TOKEN")
+var owner = os.Getenv("SMALLCLOCK12_USER")
+var cooldown, _ = strconv.Atoi(os.Getenv("SMALLCLOCK12_COOLDOWN"))
+var webhook = os.Getenv("SMALLCLOCK12_WEBHOOK")
+var webhookName = os.Getenv("SMALLCLOCK12_WEBHOOK_NAME")
 
 func main() {
 	var status atomic.Int32
 	status.Swap(STARTING)
 
-	key := strings.Split(os.Getenv("SMALLCLOCK12_KEY"), "-")
-	item := os.Getenv("SMALLCLOCK12_ITEM")
-	token := os.Getenv("SMALLCLOCK12_TOKEN")
-	user := os.Getenv("SMALLCLOCK12_USER")
-	cooldown, _ := strconv.Atoi(os.Getenv("SMALLCLOCK12_COOLDOWN"))
 
 	disc, err := discordgo.New("Bot " + token)
 	if err != nil {
@@ -54,41 +68,7 @@ func main() {
 		log.Printf("Session ready")
 	}) 
 
-	disc.AddHandler(func(s *discordgo.Session, r *discordgo.InteractionCreate) {
-		userId := ""
-		if r.User != nil {
-			userId = r.User.ID
-		} else if r.Member != nil && r.Member.User != nil && r.Member.User.ID == user {
-			userId = r.Member.User.ID
-		}
-
-		if userId == "" {
-			respondCommand("Please add me as an application & DM me for a response!", s, r)
-			return
-		}
-
-		if d := r.ApplicationCommandData(); d.Name == keyCheckCommand.Name {
-			g := d.Options[0].StringValue()
-			log.Printf("Command interaction! User: %s, Checking: %s", userId, g)
-			n := time.Now()
-			x := cooldownTracker[userId]
-			if n.Before(x) {
-				respondCommand(fmt.Sprintf("You are on cooldown! You can try again <t:%d:R>", x.Unix()), s, r)
-				return
-			}
-
-			res := compareParts(key, item, g)
-			if res == -1 {
-				respondCommand("Could not process key!", s, r)
-			} else {
-				respondCommand(fmt.Sprint(res), s, r)
-				if userId != user {
-					cooldownTracker[userId] = n.Add(time.Minute*time.Duration(cooldown))
-				}
-			}
-		}
-	}) 
-
+	disc.AddHandler(interactionHandler) 
 
 	err = disc.Open()
 	if err != nil {
@@ -106,6 +86,56 @@ func main() {
 	<-sigch
 }
 
+func interactionHandler(s *discordgo.Session, r *discordgo.InteractionCreate) {
+
+	i := interaction{
+		userId: "",
+		username: "",
+		content: "{none}",
+		result: "{none}",
+		timestamp: time.Now(),
+	}
+
+	defer func() { 
+		respondCommand(i.result, s, r)
+		go sendToWebhook(webhook, webhookName, i) 
+	}()
+
+
+	if r.User != nil {
+		i.userId = r.User.ID
+		i.username = r.User.Username
+	} else if r.Member != nil && r.Member.User != nil && r.Member.User.ID == owner {
+		i.userId = r.Member.User.ID
+		i.username = r.Member.User.Username
+	}
+
+	if i.userId == "" {
+		i.result = "Please add me as an application & DM me for a response!"
+		return
+	}
+
+	if d := r.ApplicationCommandData(); d.Name == keyCheckCommand.Name {
+		i.command = d.Name
+		i.content = d.Options[0].StringValue()
+		x := cooldownTracker[i.userId]
+		if i.timestamp.Before(x) {
+			i.result = fmt.Sprintf("You are on cooldown! You can try again <t:%d:R>", x.Unix())
+			return
+		}
+
+		res := compareParts(key, item, i.content)
+		if res == -1 {
+			i.result = "Could not process key!"
+		} else {
+			i.result = fmt.Sprint(res)
+			if i.userId != owner {
+				cooldownTracker[i.userId] = i.timestamp.Add(time.Minute*time.Duration(cooldown))
+			}
+		}
+	}
+}
+
 func respondCommand(message string, s *discordgo.Session, r *discordgo.InteractionCreate) {
 	s.InteractionRespond(r.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseChannelMessageWithSource,
@@ -114,6 +144,29 @@ func respondCommand(message string, s *discordgo.Session, r *discordgo.Interacti
 		},
 	})
 
+}
+
+func sendToWebhook(webhook string, name string, i interaction) {
+	content := fmt.Sprintf("New Interaction: ```%+v```", i)
+	log.Print(content)
+	if webhook == "" {
+		return
+	}
+
+	type webhookBody struct {
+		Username string `json:"username"`
+		Content string `json:"content"`
+	}
+
+	body, err := json.Marshal(webhookBody{name, content})
+	if err != nil {
+		log.Print(err)
+	}
+
+	_, err = http.Post(webhook, "application/json", bytes.NewReader(body))
+	if err != nil {
+		log.Print(err)
+	}
 }
 
 func compareParts(key []string, item string, guess string) int {
